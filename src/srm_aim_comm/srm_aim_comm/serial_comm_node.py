@@ -42,10 +42,10 @@ class SerialCommNode(Node):
         )
 
         self.yaw_pub = self.create_publisher(
-            Float32, "/srm_aim/gimbal_yaw_feedback", 10
+            Float32, "/srm_aim/gimbal_yaw", 10
         )
         self.pitch_pub = self.create_publisher(
-            Float32, "/srm_aim/gimbal_pitch_feedback", 10
+            Float32, "/srm_aim/gimbal_pitch", 10
         )
         self.roll_pub = self.create_publisher(
             Float32, "/srm_aim/gimbal_roll_feedback", 10
