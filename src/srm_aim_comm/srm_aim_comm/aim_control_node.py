@@ -57,7 +57,7 @@ class AimControlNode(Node):
         )
 
         self.timer = self.create_timer(
-            0.1,
+            0.02,
             self.control_loop
         )
 
