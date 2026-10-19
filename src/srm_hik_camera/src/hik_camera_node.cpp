@@ -1,4 +1,5 @@
 #include <chrono>
+#include <cmath>
 #include <cstdio>
 #include <memory>
 #include <stdexcept>
@@ -17,6 +18,10 @@ public:
     {
         rotate_180_ = declare_parameter<bool>("rotate_180", true);
         show_preview_ = declare_parameter<bool>("show_preview", true);
+        const double exposure_us =
+            declare_parameter<double>("exposure_time_us", 3000.0);
+        const double gain_db =
+            declare_parameter<double>("gain_db", 0.0);
 
         publisher_ = create_publisher<sensor_msgs::msg::Image>(
             "/srm_aim/image_raw", rclcpp::SensorDataQoS());
@@ -37,6 +42,30 @@ public:
 
             check(MV_CC_SetEnumValue(handle_, "TriggerMode", 0),
                   "Set TriggerMode");
+            const bool exposure_auto =
+                declare_parameter<bool>("exposure_auto", false);
+            const bool gain_auto =
+                declare_parameter<bool>("gain_auto", false);
+
+            check(MV_CC_SetEnumValueByString(
+                handle_, "ExposureAuto",
+                exposure_auto ? "Continuous" : "Off"),
+                "Set ExposureAuto");
+            check(MV_CC_SetEnumValueByString(
+                handle_, "GainAuto",
+                gain_auto ? "Continuous" : "Off"),
+                "Set GainAuto");
+
+            if (!exposure_auto)
+                set_manual_float("ExposureTime", exposure_us);
+            if (!gain_auto)
+                set_manual_float("Gain", gain_db);
+
+            RCLCPP_INFO(get_logger(),
+                "ExposureAuto=%s GainAuto=%s",
+                exposure_auto ? "Continuous" : "Off",
+                gain_auto ? "Continuous" : "Off");
+
             check(MV_CC_StartGrabbing(handle_), "StartGrabbing");
             grabbing_ = true;
 
@@ -71,6 +100,31 @@ private:
                           static_cast<unsigned int>(ret));
             throw std::runtime_error(message);
         }
+    }
+
+    void set_manual_float(const char* key, double value)
+    {
+        MVCC_FLOATVALUE limits = {};
+        check(MV_CC_GetFloatValue(handle_, key, &limits), key);
+
+        if (!std::isfinite(value) ||
+            value < limits.fMin || value > limits.fMax) {
+            char message[200];
+            std::snprintf(message, sizeof(message),
+                "%s=%.3f outside camera range [%.3f, %.3f]",
+                key, value, limits.fMin, limits.fMax);
+            throw std::runtime_error(message);
+        }
+
+        check(MV_CC_SetFloatValue(
+            handle_, key, static_cast<float>(value)), key);
+
+        MVCC_FLOATVALUE actual = {};
+        check(MV_CC_GetFloatValue(handle_, key, &actual), key);
+
+        RCLCPP_INFO(get_logger(),
+            "%s requested=%.3f actual=%.3f range=[%.3f, %.3f]",
+            key, value, actual.fCurValue, actual.fMin, actual.fMax);
     }
 
     void capture()

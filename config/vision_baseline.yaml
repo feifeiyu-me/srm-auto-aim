@@ -1,0 +1,17 @@
+# 2026-10-19 静止目标测试基线
+# 相机标定分辨率：1440x1080；保持镜头、ROI、旋转设置不变。
+# 灯条中心距135mm，发光长度58mm。
+# 当前使用自动曝光/增益，实际值会随环境变化。
+hik_camera_node:
+  ros__parameters:
+    rotate_180: true
+    show_preview: false
+    exposure_auto: true
+    gain_auto: true
+
+armor_detector_node:
+  ros__parameters:
+    digit_threshold: 0.40
+    hold_margin: 0.05
+    use_brightness_masks: true
+    enable_pca_refine: true
