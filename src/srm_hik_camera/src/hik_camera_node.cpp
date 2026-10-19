@@ -24,7 +24,7 @@ public:
             declare_parameter<double>("gain_db", 0.0);
 
         publisher_ = create_publisher<sensor_msgs::msg::Image>(
-            "/srm_aim/image_raw", rclcpp::SensorDataQoS());
+            "/srm_aim/image_raw", rclcpp::SensorDataQoS().keep_last(1));
 
         try {
             MV_CC_DEVICE_INFO_LIST devices = {};
@@ -43,9 +43,9 @@ public:
             check(MV_CC_SetEnumValue(handle_, "TriggerMode", 0),
                   "Set TriggerMode");
             const bool exposure_auto =
-                declare_parameter<bool>("exposure_auto", false);
+                declare_parameter<bool>("exposure_auto", true);
             const bool gain_auto =
-                declare_parameter<bool>("gain_auto", false);
+                declare_parameter<bool>("gain_auto", true);
 
             check(MV_CC_SetEnumValueByString(
                 handle_, "ExposureAuto",

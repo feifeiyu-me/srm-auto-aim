@@ -1,3 +1,4 @@
+from rclpy.qos import QoSProfile, ReliabilityPolicy
 import math
 from pathlib import Path
 
@@ -49,7 +50,7 @@ class ArmorDetectorNode(Node):
 
         self.subscription = self.create_subscription(
             Image, '/srm_aim/image_raw',
-            self.image_callback, qos_profile_sensor_data
+            self.image_callback, QoSProfile(depth=1, reliability=ReliabilityPolicy.BEST_EFFORT)
         )
         self.target_pub = self.create_publisher(
             PointStamped, '/srm_aim/target', 10

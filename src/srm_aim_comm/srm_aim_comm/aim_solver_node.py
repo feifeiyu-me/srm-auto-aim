@@ -1,12 +1,17 @@
 import math
+from collections import deque
 import time
+from pathlib import Path
+import cv2
+import numpy as np
+import yaml
 
 from srm_aim_comm.ballistics import solve_ballistic_pitch
 from srm_aim_comm.angle_tracker import AngleTracker
 
 import rclpy
 from rclpy.node import Node
-from geometry_msgs.msg import PointStamped
+from geometry_msgs.msg import PointStamped, Vector3Stamped
 from std_msgs.msg import Float32
 
 
@@ -15,6 +20,12 @@ class AimSolverNode(Node):
     def __init__(self):
         super().__init__("aim_solver_node")
 
+        self.attitude_history = deque(maxlen=200)
+        self.attitude_received_at = None
+        self.attitude_sub = self.create_subscription(
+            Vector3Stamped, "/srm_aim/gimbal_state_stamped",
+            self.attitude_callback, 10
+        )
         self.target_x = None
         self.target_y = None
         self.target_valid = False
@@ -23,6 +34,10 @@ class AimSolverNode(Node):
         self.yaw_tracker = AngleTracker()
         self.tracked_stamp_ns = None
         self.target_gimbal_yaw = None
+        self.target_gimbal_pitch = None
+        self.yaw_received_at = None
+        self.pitch_received_at = None
+        self.processed_stamp_ns = None
 
         self.gimbal_yaw = 0.0
         self.gimbal_pitch = 0.0
@@ -55,6 +70,31 @@ class AimSolverNode(Node):
 
         if min(self.image_width, self.image_height, self.fx, self.fy) <= 0:
             raise ValueError("Image dimensions and focal lengths must be positive")
+
+        calibration_file = self.declare_parameter(
+            "calibration_file",
+            str(Path.home() / "srm_aim_ws/calibration/20261019_182722/camera.yaml")
+        ).value
+        with open(calibration_file, encoding="utf-8") as stream:
+            calibration = yaml.safe_load(stream)
+        self.camera_matrix = np.asarray(
+            calibration["camera_matrix"]["data"], dtype=np.float64
+        ).reshape(3, 3)
+        self.distortion = np.asarray(
+            calibration["distortion_coefficients"]["data"], dtype=np.float64
+        )
+        self.image_width = float(calibration["image_width"])
+        self.image_height = float(calibration["image_height"])
+        self.fx = float(self.camera_matrix[0, 0])
+        self.fy = float(self.camera_matrix[1, 1])
+        self.cx = float(self.camera_matrix[0, 2])
+        self.cy = float(self.camera_matrix[1, 2])
+        if (
+            not np.isfinite(self.camera_matrix).all()
+            or not np.isfinite(self.distortion).all()
+            or min(self.image_width, self.image_height, self.fx, self.fy) <= 0
+        ):
+            raise ValueError("Invalid camera calibration")
 
         self.feedback_bullet_speed = None
         self.bullet_speed_received_at = None
@@ -99,10 +139,10 @@ class AimSolverNode(Node):
             10
         )
 
-        self.timer = self.create_timer(0.1, self.solve)
+        self.timer = self.create_timer(0.02, self.solve)
 
         self.get_logger().info(
-            "Aim solver started with simulated gimbal feedback."
+            "Aim solver started with calibrated camera; right/up are negative."
         )
 
     def bullet_speed_callback(self, msg):
@@ -120,20 +160,64 @@ class AimSolverNode(Node):
         self.target_valid = msg.point.z > 0.5
         self.target_stamp = msg.header.stamp
         # 暂用目标接收时的云台反馈；实机后续做时间同步。
-        self.target_gimbal_yaw = (
-            self.gimbal_yaw if self.have_yaw_feedback else None
-        )
+        # 在 solve 中按图像时间查询历史姿态。
+        self.target_gimbal_yaw = None
+        self.target_gimbal_pitch = None
         if not self.target_valid:
             self.yaw_tracker.reset()
             self.tracked_stamp_ns = None
 
     def yaw_feedback_callback(self, msg):
-        self.gimbal_yaw = msg.data
-        self.have_yaw_feedback = True
+        self.have_yaw_feedback = math.isfinite(msg.data)
+        self.yaw_received_at = (
+            time.monotonic() if self.have_yaw_feedback else None
+        )
+        if self.have_yaw_feedback:
+            self.gimbal_yaw = float(msg.data)
 
     def pitch_feedback_callback(self, msg):
-        self.gimbal_pitch = msg.data
-        self.have_pitch_feedback = True
+        self.have_pitch_feedback = math.isfinite(msg.data)
+        self.pitch_received_at = (
+            time.monotonic() if self.have_pitch_feedback else None
+        )
+        if self.have_pitch_feedback:
+            self.gimbal_pitch = float(msg.data)
+
+    def attitude_callback(self, msg):
+        stamp_ns = (
+            msg.header.stamp.sec * 1000000000
+            + msg.header.stamp.nanosec
+        )
+        angles = (msg.vector.x, msg.vector.y, msg.vector.z)
+        if not all(math.isfinite(value) for value in angles):
+            return
+        if self.attitude_history:
+            previous_ns = self.attitude_history[-1][0]
+            if stamp_ns < previous_ns:
+                self.attitude_history.clear()
+            elif stamp_ns == previous_ns:
+                return
+            elif stamp_ns - previous_ns > 200000000:
+                # 中断或重连后不跨缺口插值。
+                self.attitude_history.clear()
+        self.attitude_history.append((stamp_ns, *angles))
+        self.attitude_received_at = time.monotonic()
+
+    def attitude_at(self, stamp_ns):
+        # 只插值，不向历史范围外猜测。
+        for first, second in zip(
+            self.attitude_history, list(self.attitude_history)[1:]
+        ):
+            if first[0] <= stamp_ns <= second[0]:
+                gap = second[0] - first[0]
+                if gap <= 0 or gap > 80000000:
+                    return None
+                weight = (stamp_ns - first[0]) / gap
+                yaw_delta = (second[1] - first[1] + 180.0) % 360.0 - 180.0
+                yaw = first[1] + weight * yaw_delta
+                pitch = first[2] + weight * (second[2] - first[2])
+                return yaw, pitch
+        return None
 
     def solve(self):
         if (
@@ -161,17 +245,45 @@ class AimSolverNode(Node):
             self.tracked_stamp_ns = None
             return
 
+        now = time.monotonic()
+        if (
+            self.attitude_received_at is None
+            or now - self.attitude_received_at > 0.2
+        ):
+            return
+
+        stamp_ns = (
+            self.target_stamp.sec * 1000000000
+            + self.target_stamp.nanosec
+        )
+        aligned = self.attitude_at(stamp_ns)
+        if aligned is None:
+            return
+        self.target_gimbal_yaw, self.target_gimbal_pitch = aligned
+        if (
+            self.processed_stamp_ns is not None
+            and stamp_ns <= self.processed_stamp_ns
+        ):
+            return
+        self.processed_stamp_ns = stamp_ns
+
         dx = self.target_x - self.cx
         dy = self.target_y - self.cy
+        pixel = np.array(
+            [[[self.target_x, self.target_y]]], dtype=np.float64
+        )
+        normalized = cv2.undistortPoints(
+            pixel, self.camera_matrix, self.distortion
+        )[0, 0]
+        nx, ny = map(float, normalized)
 
-        # 针孔模型：像素偏差换算为角度（度）
-        yaw_offset = math.degrees(math.atan(dx / self.fx))
-        # 暂定图像上方对应正俯仰，实机方向需联调确认
-        pitch_offset = math.degrees(math.atan(-dy / self.fy))
+        # 实车已验证：向右 yaw 减小，向上 pitch 减小。
+        yaw_offset = -math.degrees(math.atan(nx))
+        pitch_offset = math.degrees(math.atan(ny))
 
-        # 绝对目标角度 = 当前云台角度 + 相对角度
-        target_yaw = self.gimbal_yaw + yaw_offset
-        target_pitch = self.gimbal_pitch + pitch_offset
+        # 使用本张图接收时保存的姿态，避免旧偏差叠加到新姿态。
+        target_yaw = self.target_gimbal_yaw + yaw_offset
+        target_pitch = self.target_gimbal_pitch + pitch_offset
 
         if self.get_parameter("enable_prediction").value:
             lead = float(self.get_parameter("actuation_delay_sec").value)
