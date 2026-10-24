@@ -32,6 +32,9 @@ colcon build
 source install/setup.bash
 ```
 
+YOLO-Pose 与 C++ 后处理的多装甲板消息定义、原图时间戳约定和独立编译验证方法见
+[视觉消息接口说明](src/srm_aim_interfaces/README.md)。该接口包不启动控制或串口节点。
+
 ## 说明
 
 本项目仍在开发中，目前测试结果主要来自软件仿真，完成部分相机实车调试。
