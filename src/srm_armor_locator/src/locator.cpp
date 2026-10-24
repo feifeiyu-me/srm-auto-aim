@@ -42,7 +42,9 @@ std::vector<cv::Point3d> object_points(const Parameters & p) {
   return {{-p.width_m/2,-p.height_m/2,0},{-p.width_m/2,p.height_m/2,0},
     {p.width_m/2,p.height_m/2,0},{p.width_m/2,-p.height_m/2,0}};
 }
-double digit_score(const cv::Mat & gray, const Corners & c, const cv::Mat & templ) {
+double digit_score(const cv::Mat & gray, const Corners & c, const cv::Mat & templ,
+  DigitTrace * trace) {
+  if (trace) *trace = DigitTrace{};
   if (gray.empty() || gray.type()!=CV_8UC1 || templ.empty() || templ.type()!=CV_8UC1 ||
     !srm_armor_refiner::valid_corners(c,gray.size(),{})) return -1;
   const std::vector<cv::Point2f> src(c.begin(),c.end());
@@ -51,7 +53,14 @@ double digit_score(const cv::Mat & gray, const Corners & c, const cv::Mat & temp
   cv::warpPerspective(gray,normalized,cv::getPerspectiveTransform(src,dst),{96,96});
   const cv::Mat roi = normalized(cv::Rect(14,0,68,96));
   cv::Scalar mean, deviation; cv::meanStdDev(roi,mean,deviation);
-  if (deviation[0] < 2) return 0;
+  if (trace) {
+    trace->perspective=normalized.clone(); trace->roi=roi.clone();
+    trace->roi_stddev=deviation[0]; trace->reason="no_positive_match";
+  }
+  if (deviation[0] < 2) {
+    if(trace) trace->reason="low_roi_contrast";
+    return 0;
+  }
   double best=0;
   for (int h : {44,56,68,80,90}) for (double squeeze : {0.6,0.8,1.0}) {
     const int w = cvRound(h * static_cast<double>(templ.cols)/templ.rows * squeeze);
@@ -62,7 +71,14 @@ double digit_score(const cv::Mat & gray, const Corners & c, const cv::Mat & temp
     for (int y=0;y<scores.rows;++y) for (int x=0;x<scores.cols;++x) {
       const float score=scores.at<float>(y,x);
       if (std::abs(x+w/2.0-roi.cols/2.0)<=9 && std::abs(y+h/2.0-48)<=18 &&
-        std::isfinite(score)) best=std::max(best,static_cast<double>(score));
+        std::isfinite(score)) {
+        if (trace && score>best) {
+          trace->best_rect={x,y,w,h}; trace->best_template=candidate.clone();
+          trace->best_patch=roi(trace->best_rect).clone();
+          trace->best_squeeze=squeeze; trace->reason="best_match";
+        }
+        best=std::max(best,static_cast<double>(score));
+      }
     }
   }
   return best;

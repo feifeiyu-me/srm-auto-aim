@@ -11,6 +11,7 @@
 #include <srm_aim_interfaces/msg/armor_location_array.hpp>
 #include <srm_armor_refiner/frame_matcher.hpp>
 #include "srm_armor_locator/locator.hpp"
+#include "srm_armor_locator/digit_debug.hpp"
 namespace srm_armor_locator {
 using Input=srm_aim_interfaces::msg::ArmorDetectionArray;
 using Output=srm_aim_interfaces::msg::ArmorLocationArray;
@@ -39,6 +40,14 @@ public:
       cv::Scalar m,s; if (!template_.empty()) cv::meanStdDev(template_,m,s);
       if (template_.empty() || s[0]<2) throw std::invalid_argument("Missing/constant digit template: "+templ);
     }
+    template_file_=templ;
+    const bool debug_enabled=declare_parameter<bool>("digit_debug_enabled",false,desc);
+    const auto debug_dir=declare_parameter<std::string>("digit_debug_output_dir","",desc);
+    const int debug_limit=declare_parameter<int>("digit_debug_max_samples",20,desc);
+    const double debug_interval=real("digit_debug_interval_sec",1.0);
+    if(debug_enabled && !digit_enabled_) throw std::invalid_argument("Digit debug requires digit verification enabled");
+    writer_=std::make_unique<DigitDebugWriter>(debug_enabled,debug_dir,debug_limit,debug_interval);
+    if(debug_enabled) RCLCPP_INFO(get_logger(),"Digit ROI debug directory: %s",writer_->directory().c_str());
     const int images=declare_parameter<int>("image_cache_size",20,desc);
     const int detections=declare_parameter<int>("detection_cache_size",20,desc);
     const int64_t bytes=declare_parameter<int64_t>("max_cache_bytes",96*1024*1024,desc);
@@ -60,6 +69,7 @@ public:
 private:
   Calibration calibration_; Parameters p_; cv::Mat template_; bool digit_enabled_; double threshold_;
   std::string optical_; std::unique_ptr<Matcher> matcher_;
+  std::string template_file_; std::unique_ptr<DigitDebugWriter> writer_;
   rclcpp::Publisher<Output>::SharedPtr output_;
   rclcpp::Publisher<diagnostic_msgs::msg::DiagnosticArray>::SharedPtr debug_;
   rclcpp::Subscription<sensor_msgs::msg::Image>::SharedPtr images_;
@@ -97,8 +107,18 @@ private:
       else if (!srm_armor_refiner::valid_corners(corners,calibration_.size,{})) location.reason="invalid_geometry";
       else {
         if(digit_enabled_) {
-          try {location.digit_score=digit_score(gray,corners,template_);}
+          DigitTrace trace;
+          const auto debug_now=DigitDebugWriter::Clock::now();
+          const bool capture=writer_->wants_sample(debug_now);
+          try {location.digit_score=digit_score(gray,corners,template_,capture?&trace:nullptr);}
           catch(const cv::Exception &){location.digit_score=-1;}
+          if(capture && !trace.roi.empty()) {
+            try {writer_->save(gray,corners,template_,trace,pair.detections->header,i,
+                location.digit_score,threshold_,template_file_,debug_now);}
+            catch(const std::exception & e) {
+              RCLCPP_WARN(get_logger(),"Digit debug saving disabled after error: %s",e.what());
+            }
+          }
           location.digit_verified=location.digit_score>=threshold_;
           if(location.digit_verified) location.digit=2;
         }

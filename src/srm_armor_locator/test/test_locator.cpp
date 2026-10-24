@@ -86,3 +86,60 @@ TEST(Digit, PerspectiveNormalizationUsesLtLbRbRt){
     std::vector<cv::Point2f>(corners.begin(),corners.end())),{220,220});
   EXPECT_GT(digit_score(projected,corners,templ),.65);
 }
+
+#include "srm_armor_locator/digit_debug.hpp"
+#include <yaml-cpp/yaml.h>
+TEST(DigitDebug, TracePreservesScoresAndExactMatchingBuffers){
+  const auto templ=cv::imread(TEMPLATE_PATH,cv::IMREAD_GRAYSCALE);
+  cv::Mat patch=cv::Mat::zeros(96,96,CV_8U),scaled;
+  const int width=cvRound(56.*templ.cols/templ.rows*.6);
+  cv::resize(templ,scaled,{width,56});scaled.copyTo(patch(cv::Rect((96-width)/2,20,width,56)));
+  cv::Mat gray=cv::Mat::zeros(160,160,CV_8U);patch.copyTo(gray(cv::Rect(20,20,96,96)));
+  Corners points{{{20,20},{20,115},{115,115},{115,20}}};
+  DigitTrace trace;const auto score=digit_score(gray,points,templ,&trace);
+  EXPECT_DOUBLE_EQ(score,digit_score(gray,points,templ));
+  EXPECT_EQ(trace.perspective.size(),cv::Size(96,96));
+  EXPECT_EQ(trace.roi.size(),cv::Size(68,96));
+  EXPECT_EQ(cv::norm(trace.roi,trace.perspective(cv::Rect(14,0,68,96)),cv::NORM_INF),0);
+  EXPECT_EQ(cv::norm(trace.best_patch,trace.roi(trace.best_rect),cv::NORM_INF),0);
+  cv::Mat scores;cv::matchTemplate(trace.best_patch,trace.best_template,scores,cv::TM_CCOEFF_NORMED);
+  EXPECT_NEAR(scores.at<float>(0,0),score,1e-5);
+}
+TEST(DigitDebug, DisabledBudgetIntervalMetadataAndUniqueSessions){
+  const auto base=std::filesystem::temp_directory_path()/
+    ("digit_debug_"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+  DigitDebugWriter disabled(false,base.string(),2,0);
+  EXPECT_FALSE(std::filesystem::exists(base));
+  EXPECT_FALSE(disabled.wants_sample(DigitDebugWriter::Clock::now()));
+  DigitDebugWriter writer(true,base.string(),2,1);
+  const auto now=DigitDebugWriter::Clock::now();
+  const auto templ=cv::imread(TEMPLATE_PATH,cv::IMREAD_GRAYSCALE);
+  cv::Mat gray=cv::Mat::zeros(160,160,CV_8U);
+  Corners points{{{20,20},{20,115},{115,115},{115,20}}};DigitTrace trace;
+  const auto score=digit_score(gray,points,templ,&trace);
+  EXPECT_EQ(trace.reason,"low_roi_contrast");
+  std_msgs::msg::Header h;h.stamp.sec=123;h.stamp.nanosec=456;h.frame_id="camera/frame";
+  EXPECT_TRUE(writer.save(gray,points,templ,trace,h,3,score,.65,TEMPLATE_PATH,now));
+  EXPECT_FALSE(writer.save(gray,points,templ,trace,h,3,score,.65,TEMPLATE_PATH,now));
+  EXPECT_TRUE(writer.save(gray,points,templ,trace,h,3,score,.65,TEMPLATE_PATH,now+std::chrono::seconds(2)));
+  EXPECT_FALSE(writer.wants_sample(now+std::chrono::seconds(5)));
+  EXPECT_EQ(std::distance(std::filesystem::directory_iterator(writer.directory()),std::filesystem::directory_iterator{}),10);
+  const auto meta=YAML::LoadFile((writer.directory()/"1_123_456_target_3_metadata.yaml").string());
+  EXPECT_EQ(meta["frame_id"].as<std::string>(),h.frame_id);
+  EXPECT_EQ(meta["stamp_nanosec"].as<int>(),456);EXPECT_EQ(meta["input_index"].as<int>(),3);
+  EXPECT_DOUBLE_EQ(meta["threshold"].as<double>(),.65);EXPECT_FALSE(meta["verified"].as<bool>());
+  EXPECT_EQ(cv::imread((writer.directory()/"1_123_456_target_3_roi.png").string(),0).size(),cv::Size(68,96));
+  DigitDebugWriter another(true,base.string(),2,0);EXPECT_NE(writer.directory(),another.directory());
+  std::filesystem::remove_all(base);
+}
+TEST(DigitDebug, WriteFailureStopsFurtherAttempts){
+  const auto base=std::filesystem::temp_directory_path()/
+    ("digit_debug_failure_"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+  DigitDebugWriter writer(true,base.string(),2,0);
+  std::filesystem::remove_all(writer.directory());
+  const auto now=DigitDebugWriter::Clock::now();
+  std_msgs::msg::Header header;
+  EXPECT_THROW(writer.save(cv::Mat::zeros(10,10,CV_8U),{},cv::Mat(),{},header,0,0,.65,"",now),std::exception);
+  EXPECT_EQ(writer.attempts(),1);EXPECT_FALSE(writer.wants_sample(now));
+  std::filesystem::remove_all(base);
+}

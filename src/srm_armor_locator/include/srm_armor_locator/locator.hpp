@@ -23,7 +23,14 @@ struct PoseResult {
   double error{-1};
 };
 std::vector<cv::Point3d> object_points(const Parameters & p);
-double digit_score(const cv::Mat & gray, const Corners & corners, const cv::Mat & templ);
+struct DigitTrace {
+  cv::Mat perspective, roi, best_template, best_patch;
+  cv::Rect best_rect;
+  double roi_stddev{0}, best_squeeze{0};
+  std::string reason{"invalid_input"};
+};
+double digit_score(const cv::Mat & gray, const Corners & corners, const cv::Mat & templ,
+  DigitTrace * trace = nullptr);
 PoseResult solve(const Calibration & calibration, const Corners & corners,
   const Parameters & p = {});
 }
