@@ -34,6 +34,7 @@ setup(
         'serial_comm_node = srm_aim_comm.serial_comm_node:main',
         'armor_detector_node = srm_aim_comm.armor_detector_node:main',
         'yolo_pose_node = srm_aim_comm.yolo_pose_node:main',
+        'yolo_visualizer_node = srm_aim_comm.yolo_visualizer_node:main',
         ],
     },
 )
