@@ -124,3 +124,12 @@ colcon test-result --test-result-base build/srm_aim_interfaces --verbose
 
 本次新增接口不改变现有 `/srm_aim/target` 等话题，不改变 Python 算法、海康采集或
 上下位机 18/30 字节协议。新的 ROS 消息也不应直接当作串口帧发送。
+
+## 第 5 阶段定位接口
+
+新增 `ArmorLocation` / `ArmorLocationArray`，保留源图 Header，逐目标提供数字验证
+开关、验证状态/相关分数、PnP 有效状态/原因、歧义、Pose、轴向深度及欧氏距离。
+数组的 `optical_frame_id` 专门声明 Pose 的光学坐标系，不将原始 Header.frame_id
+静默改名；输入索引仅在本帧内有效。必须检查 pose_valid 后再使用位姿或距离。
+关闭数字验证时 digit=0、digit_verified=false、digit_score=-1，不表示数字 2 已识别。
+详见[定位节点说明](../../docs/armor_locator.md)。原有三个检测消息字段保持不变。
