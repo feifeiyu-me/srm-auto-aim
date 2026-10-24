@@ -18,6 +18,7 @@ setup(
     description='TODO: Package description',
     license='TODO: License declaration',
     extras_require={
+        'yolo': ['ultralytics>=8.3.0,<9.0', 'numpy>=1.23,<2'],
         'test': [
             'pytest',
         ],
@@ -32,6 +33,7 @@ setup(
         'gimbal_sim_node = srm_aim_comm.gimbal_sim_node:main',
         'serial_comm_node = srm_aim_comm.serial_comm_node:main',
         'armor_detector_node = srm_aim_comm.armor_detector_node:main',
+        'yolo_pose_node = srm_aim_comm.yolo_pose_node:main',
         ],
     },
 )

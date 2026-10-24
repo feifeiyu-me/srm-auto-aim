@@ -35,6 +35,9 @@ source install/setup.bash
 YOLO-Pose 与 C++ 后处理的多装甲板消息定义、原图时间戳约定和独立编译验证方法见
 [视觉消息接口说明](src/srm_aim_interfaces/README.md)。该接口包不启动控制或串口节点。
 
+独立的 Python YOLO-Pose 入口、模型要求、运行参数和离线测试见
+[YOLO-Pose 节点说明](docs/yolo_pose.md)。需要红蓝两类、四关键点的装甲板权重。
+
 ## 说明
 
 本项目仍在开发中，目前测试结果主要来自软件仿真，完成部分相机实车调试。

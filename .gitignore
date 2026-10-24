@@ -29,3 +29,7 @@ id_ed25519
 .DS_Store
 Thumbs.db
 *.bak_*
+
+# Local YOLO weights (never commit trained models)
+/models/
+*.pt
