@@ -1,4 +1,5 @@
 #pragma once
+#include <array>
 #include <string>
 #include <vector>
 #include <opencv2/core.hpp>
@@ -31,6 +32,20 @@ struct DigitTrace {
 };
 double digit_score(const cv::Mat & gray, const Corners & corners, const cv::Mat & templ,
   DigitTrace * trace = nullptr);
+// Observation only: candidates sorted by RMS, after the existing validity filters.
+struct IppeCandidate {
+  cv::Vec3d translation{0,0,0};
+  double error_px{-1}, distance_mm{-1};
+};
+struct IppeTrace {
+  size_t valid_candidates{0};
+  bool pair_available{false}, diagnostic_error{false};
+  std::array<IppeCandidate,2> candidates;
+  cv::Vec3d translation_delta_mm{0,0,0}; // second minus best
+  double error_gap_px{-1}, translation_separation_mm{-1};
+  double signed_distance_difference_mm{0}, rotation_difference_deg{-1};
+  bool error_gap_close{false}, translation_exceeds{false}, rotation_exceeds{false};
+};
 PoseResult solve(const Calibration & calibration, const Corners & corners,
-  const Parameters & p = {});
+  const Parameters & p = {}, IppeTrace * trace = nullptr);
 }

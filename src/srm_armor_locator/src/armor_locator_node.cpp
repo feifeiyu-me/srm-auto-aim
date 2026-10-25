@@ -12,6 +12,7 @@
 #include <srm_armor_refiner/frame_matcher.hpp>
 #include "srm_armor_locator/locator.hpp"
 #include "srm_armor_locator/digit_debug.hpp"
+#include "srm_armor_locator/ippe_debug.hpp"
 namespace srm_armor_locator {
 using Input=srm_aim_interfaces::msg::ArmorDetectionArray;
 using Output=srm_aim_interfaces::msg::ArmorLocationArray;
@@ -30,6 +31,14 @@ public:
     p_.max_error_px=real("max_error_px",3); p_.ambiguity_gap_px=real("ambiguity_gap_px",.1);
     p_.ambiguity_translation_m=real("ambiguity_translation_m",.01);
     p_.ambiguity_angle_deg=real("ambiguity_angle_deg",5); p_.validate();
+    const bool ippe_enabled=declare_parameter<bool>("ippe_debug_enabled",false,desc);
+    const double ippe_interval=real("ippe_debug_interval_sec",1.0);
+    const int ippe_samples=declare_parameter<int>("ippe_debug_max_samples",2,desc);
+    // Validate even when disabled; do not allocate a publisher or collect traces by default.
+    if(ippe_enabled) {
+      ippe_=std::make_unique<IppeDebug>(ippe_interval,ippe_samples,p_);
+      ippe_output_=create_publisher<diagnostic_msgs::msg::DiagnosticArray>("/srm_aim/armor_locator/ippe_debug",2);
+    } else {IppeDebug validate(ippe_interval,ippe_samples,p_);}
     digit_enabled_=declare_parameter<bool>("enable_digit_verification",true,desc);
     threshold_=real("digit_threshold",.65);
     if (!std::isfinite(threshold_) || threshold_<=0 || threshold_>1) throw std::invalid_argument("Digit threshold must be in (0,1]; use the explicit bypass switch instead of zero");
@@ -63,10 +72,14 @@ public:
       [this](sensor_msgs::msg::Image::ConstSharedPtr m){auto pair=matcher_->add_image(m,Matcher::Clock::now());flush();if(pair) process(*pair);});
     detections_=create_subscription<Input>(input,rclcpp::QoS(10).best_effort(),
       [this](Input::ConstSharedPtr m){auto pair=matcher_->add_detection(m,Matcher::Clock::now());flush();if(pair) process(*pair);});
-    timer_=create_wall_timer(std::chrono::milliseconds(100),[this]{matcher_->prune(Matcher::Clock::now());flush();});
+    timer_=create_wall_timer(std::chrono::milliseconds(100),[this]{matcher_->prune(Matcher::Clock::now());flush();
+      if(ippe_) {auto report=ippe_->flush(IppeDebug::Clock::now());if(report) ippe_output_->publish(*report);}
+    });
     RCLCPP_INFO(get_logger(),"Locator ready; digit verification %s; optical poses only; no control I/O",digit_enabled_?"ENABLED":"DISABLED (digit unverified)");
   }
 private:
+  std::unique_ptr<IppeDebug> ippe_;
+  rclcpp::Publisher<diagnostic_msgs::msg::DiagnosticArray>::SharedPtr ippe_output_;
   Calibration calibration_; Parameters p_; cv::Mat template_; bool digit_enabled_; double threshold_;
   std::string optical_; std::unique_ptr<Matcher> matcher_;
   std::string template_file_; std::unique_ptr<DigitDebugWriter> writer_;
@@ -124,7 +137,9 @@ private:
         }
         if(digit_enabled_ && !location.digit_verified) location.reason="digit_not_verified";
         else {
-          const auto result=solve(calibration_,corners,p_);
+          IppeTrace trace;
+          const auto result=solve(calibration_,corners,p_,ippe_?&trace:nullptr);
+          if(ippe_) ippe_->observe(output.header,i,trace,result);
           location.pose_valid=result.valid;location.ambiguous=result.ambiguous;
           location.reason=result.reason;location.reprojection_error_px=result.error;
           if(result.valid) {

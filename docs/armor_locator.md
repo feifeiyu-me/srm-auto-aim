@@ -170,3 +170,77 @@ ros2 run srm_armor_locator armor_locator_node --ros-args \
 正/负样本可视化输出、原始 Header、数字验证开关和原有 PnP 路径；限额为 2 时实际
 仅产生 2 组、共 10 个文件。PnP 实现保持逐字节不变，阈值仍为 0.65；尚未获得 NUC
 低分样本，不能据此确定实机低分原因或宣称识别率提升。
+
+## IPPE 双解歧义诊断（默认关闭）
+
+定位拒绝逻辑与阈值保持不变：两个**通过原有有效性筛选**的候选按重投影 RMS 升序排列；当 `error_1 - error_0 <= ambiguity_gap_px` 且（相对旋转角 `> ambiguity_angle_deg` **或**平移向量间距 `> ambiguity_translation_m`）时，仍返回 `pose_valid=false / ambiguous=true / reason=ambiguous_ippe`。默认阈值仍是 0.1 px、5°、0.01 m。诊断不会把歧义结果转换为位置有效，也不会影响后续跟踪。
+
+新增只读参数：
+
+| 参数 | 默认值 | 作用 |
+|---|---|---|
+| `ippe_debug_enabled` | `false` | 启用独立诊断，不改变定位输出 |
+| `ippe_debug_interval_sec` | `1.0` | 单调时钟汇总周期，允许 0.1–3600 秒 |
+| `ippe_debug_max_samples` | `2` | 每个汇总窗口最多保留多少条双解详情，允许 0–64；0 为仅统计 |
+
+启用时发布 `diagnostic_msgs/DiagnosticArray` 到 `/srm_aim/armor_locator/ippe_debug`，深度 2；默认关闭时不创建此发布者、不采集候选轨迹。没有逐帧控制台日志或写盘。空闲无新 PnP 尝试时不重复发布。汇总借助现有 100 ms 定时器，实际周期可能受节点负载影响。
+
+每条 `armor_locator/ippe_pair` 样本包含：
+
+- 原始图像 `stamp_sec / stamp_nanosec / frame_id` 和当前帧 `input_index`。数组 Header 为该窗口最近一次 PnP 尝试的源 Header，查看历史样本必须使用样本自身的 Header 字段。
+- `candidate_0/1_reprojection_error_px`：四个角点重投影 RMS（px）。0 是最低误差候选，1 是第二候选，不是 OpenCV 原始返回编号。
+- `candidate_0/1_t_x_mm / t_y_mm / t_z_mm`：相机光学坐标下平移向量（mm）。
+- `candidate_0/1_distance_mm`：各自欧氏距离（mm）。
+- `delta_t_x/y/z_mm`：第二候选减最佳候选的向量差。
+- `translation_separation_mm = ||t1-t0|| × 1000`：平移向量间距，**这是原有平移歧义判断使用的量**。
+- `signed_distance_difference_mm = ||t1||×1000 - ||t0||×1000`，以及绝对值 `absolute_distance_difference_mm`。距离接近不保证三维位置或姿态接近，不可用它替代平移向量间距。
+- `rotation_difference_deg`：`R0 * R1^T` 的相对旋转角度。
+- `error_gap_px`、三个实际阈值、`error_gap_close`、`translation_exceeds`、`rotation_exceeds`。
+- `translation_triggered / rotation_triggered` 及 `trigger=none / translation / rotation / rotation_and_translation`，说明是否实际触发拒绝。仅差异超限而误差差值不够接近时，仍是 `trigger=none`。
+
+`armor_locator/ippe_statistics` 同时提供 `window_*` 和进程累计 `total_*`：PnP 尝试、接受、ambiguous_ippe、0/1 个有效候选、双解数、仅旋转触发/仅平移触发/两者触发、诊断计算错误、被限额省略的详情数。对全部可用双解统计误差差、向量间距、欧氏距离绝对差、旋转差异的 count/min/mean/max。计数单位为**目标的 PnP 尝试**，不是图像帧数；数字验证或几何检查提前拒绝的目标不计入。
+
+每个窗口仅保留最先出现的 N 条详情，并非随机采样；其余仍参与全部统计。`samples_omitted` 非零意味着详情记录不完整，不代表这些目标没有参与定位。单解/无解只计数，不输出不存在的第二解；未出现双解时不输出伪造的均值。计数和详情均在进程重启后重新开始，内存不随帧数增长。
+
+### NUC 运行与采样
+
+在仓库根目录构建并保持已有相机、YOLO、PCA 链路：
+
+```bash
+source /opt/ros/humble/setup.bash
+colcon build --packages-up-to srm_armor_locator --executor sequential \
+  --cmake-args -DBUILD_TESTING=ON -DCMAKE_BUILD_TYPE=RelWithDebInfo
+source install/setup.bash
+ros2 run srm_armor_locator armor_locator_node --ros-args \
+  -p calibration_file:="$PWD/calibration/20261019_182722/camera.yaml" \
+  -p enable_digit_verification:=false \
+  -p ippe_debug_enabled:=true \
+  -p ippe_debug_interval_sec:=1.0 \
+  -p ippe_debug_max_samples:=2
+```
+
+另一终端读取一次，避免持续刷屏：
+
+```bash
+source /opt/ros/humble/setup.bash
+source install/setup.bash
+ros2 topic echo /srm_aim/armor_locator/ippe_debug --once
+```
+
+需要保留数据时使用 `ros2 bag record /srm_aim/armor_locator/ippe_debug /srm_aim/armor_locations`，而不是持续打印详情。若希望覆盖约 10–16 条/秒的全部双解详情，可重启定位节点，将 `ippe_debug_max_samples` 设为 32，并检查 `samples_omitted`。统计始终涵盖全部 PnP 尝试。采样结束后先停止图像输入，等待超过一个诊断周期再结束定位节点，以保留最后窗口统计。
+
+重点比较：`total_rotation_only`、`total_translation_only`、`total_both`，以及向量间距和旋转差异的分布。当前仍严格拒绝 ambiguous_ippe；这些诊断本身不能证明位置可安全使用，也不是实测定位精度。不要启动云台控制、串口发送或发射节点。
+
+### 测试复现
+
+```bash
+colcon test --packages-select srm_armor_locator --event-handlers console_direct+
+colcon test-result --verbose
+ROS_DOMAIN_ID=82 ROS_LOCALHOST_ONLY=1 \
+  python3 src/srm_armor_locator/test/ippe_ros_smoke.py \
+    calibration/20261019_182722/camera.yaml
+```
+
+跨进程测试使用合成图像/角点和真实 C++ ROS 节点，分别运行默认关闭与启用诊断，比较全部定位消息，检查原始 Header、mm/度字段、双解统计和样本上限。大图像 DDS 传输受运行环境配置影响；不能将传输超时解释成算法通过。
+
+本次云端验证（2026-10-25）：Ubuntu 22.04 / ROS2 Humble / OpenCV 4.5.4 构建成功、无编译警告；新增 4 项 IPPE 诊断测试与原有 11 项定位测试全部通过。真实跨进程测试通过：默认无诊断发布者，开启后有限额/限频、完整样本 Header、24 次尝试 / 12 次接受 / 12 次歧义计数正确；关闭和开启时 12 组定位消息字段完全一致。原始记录位于 `/workspace/.srm-cloud/ippe-validation.log` 和 `/workspace/.srm-cloud/ippe-ros-smoke.log`。测试使用合成输入，未连接任何控制机构，未验证 NUC 实测双解差异或定位精度。

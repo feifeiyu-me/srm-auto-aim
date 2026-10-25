@@ -143,3 +143,85 @@ TEST(DigitDebug, WriteFailureStopsFurtherAttempts){
   EXPECT_EQ(writer.attempts(),1);EXPECT_FALSE(writer.wants_sample(now));
   std::filesystem::remove_all(base);
 }
+
+#include "srm_armor_locator/ippe_debug.hpp"
+#include <map>
+TEST(IppeDebug, TraceDoesNotChangeSelectionAndReportsGeometry){
+  const auto c=camera();
+  for(const auto & pose:std::vector<std::pair<cv::Vec3d,cv::Vec3d>>{
+    {{.1,.2,0},{0,0,4.7}},{{.3,.5,.1},{.3,.1,2}},{{0,0,0},{0,0,4.7}}}) {
+    const auto points=project(c,pose.first,pose.second);
+    const auto plain=solve(c,points);IppeTrace trace;
+    const auto observed=solve(c,points,{},&trace);
+    EXPECT_EQ(observed.valid,plain.valid);EXPECT_EQ(observed.ambiguous,plain.ambiguous);
+    EXPECT_EQ(observed.reason,plain.reason);EXPECT_DOUBLE_EQ(observed.error,plain.error);
+    EXPECT_EQ(cv::norm(observed.translation-plain.translation),0);
+    EXPECT_EQ(cv::norm(observed.rotation-plain.rotation),0);
+    ASSERT_TRUE(trace.pair_available);EXPECT_EQ(trace.valid_candidates,2u);
+    EXPECT_LE(trace.candidates[0].error_px,trace.candidates[1].error_px);
+    for(const auto & candidate:trace.candidates)
+      EXPECT_NEAR(candidate.distance_mm,cv::norm(candidate.translation)*1000,1e-9);
+    EXPECT_NEAR(trace.translation_separation_mm,cv::norm(trace.translation_delta_mm),1e-9);
+    EXPECT_NEAR(trace.signed_distance_difference_mm,trace.candidates[1].distance_mm-trace.candidates[0].distance_mm,1e-9);
+    EXPECT_EQ(observed.ambiguous,trace.error_gap_close&&(trace.rotation_exceeds||trace.translation_exceeds));
+    EXPECT_GE(trace.rotation_difference_deg,0);EXPECT_LE(trace.rotation_difference_deg,180);
+  }
+}
+TEST(IppeDebug, MissingPairResetsTraceAndRemainsUnavailable){
+  auto c=camera();IppeTrace trace;trace.pair_available=true;
+  Corners invalid{};const auto result=solve(c,invalid,{},&trace);
+  EXPECT_FALSE(result.valid);EXPECT_FALSE(trace.pair_available);EXPECT_EQ(trace.valid_candidates,0u);
+  Parameters p;p.max_depth_m=1;
+  solve(c,project(c,{.2,.4,0},{0,0,4.7}),p,&trace);
+  EXPECT_FALSE(trace.pair_available);EXPECT_EQ(trace.valid_candidates,0u);
+  // Tight error guard leaves only the best synthetic solution.
+  p=Parameters{};p.max_error_px=.001;
+  solve(c,project(c,{.3,.5,0},{.1,0,2}),p,&trace);
+  EXPECT_EQ(trace.valid_candidates,1u);EXPECT_FALSE(trace.pair_available);
+}
+namespace {
+std::map<std::string,std::string> values(const diagnostic_msgs::msg::DiagnosticStatus & s){
+  std::map<std::string,std::string> out;for(const auto & v:s.values)out[v.key]=v.value;return out;
+}
+}
+TEST(IppeDebug, BoundedSamplesRateAndStatistics){
+  const auto start=IppeDebug::Clock::now();Parameters p;IppeDebug debug(1,2,p,start);
+  IppeTrace trace;trace.valid_candidates=2;trace.pair_available=true;
+  trace.error_gap_px=.05;trace.translation_separation_mm=2;
+  trace.signed_distance_difference_mm=-1;trace.rotation_difference_deg=20;
+  trace.error_gap_close=true;trace.rotation_exceeds=true;
+  trace.candidates[0].translation={.1,.2,4.7};trace.candidates[0].distance_mm=4705;
+  PoseResult result;result.ambiguous=true;result.reason="ambiguous_ippe";
+  std_msgs::msg::Header header;header.stamp.sec=123;header.stamp.nanosec=456;header.frame_id="source_camera";
+  for(size_t i=0;i<5;++i)debug.observe(header,i,trace,result);
+  EXPECT_FALSE(debug.flush(start+std::chrono::milliseconds(999)));
+  auto report=debug.flush(start+std::chrono::seconds(1));ASSERT_TRUE(report);
+  EXPECT_EQ(report->header,header);ASSERT_EQ(report->status.size(),3u);
+  auto stats=values(report->status[0]);EXPECT_EQ(stats["window_attempts"],"5");
+  EXPECT_EQ(stats["total_ambiguous_ippe"],"5");EXPECT_EQ(stats["window_rotation_only"],"5");
+  EXPECT_EQ(stats["window_samples_omitted"],"3");
+  EXPECT_DOUBLE_EQ(std::stod(stats["window_absolute_distance_difference_mm_mean"]),1);
+  auto sample=values(report->status[1]);EXPECT_EQ(sample["frame_id"],header.frame_id);
+  EXPECT_EQ(sample["stamp_nanosec"],"456");EXPECT_EQ(sample["input_index"],"0");
+  EXPECT_EQ(sample["trigger"],"rotation");EXPECT_EQ(sample["translation_triggered"],"false");
+  EXPECT_DOUBLE_EQ(std::stod(sample["candidate_0_t_z_mm"]),4700);
+  EXPECT_FALSE(debug.flush(start+std::chrono::seconds(2))); // no idle spam
+  trace.translation_exceeds=true;debug.observe(header,0,trace,result);
+  auto next=debug.flush(start+std::chrono::seconds(2));ASSERT_TRUE(next);
+  stats=values(next->status[0]);EXPECT_EQ(stats["window_attempts"],"1");
+  EXPECT_EQ(stats["total_attempts"],"6");EXPECT_EQ(stats["window_both"],"1");
+}
+TEST(IppeDebug, TranslationOnlyNonTriggeredCountsAndStatsOnlyMode){
+  const auto start=IppeDebug::Clock::now();IppeDebug debug(.1,0,{},start);
+  IppeTrace trace;trace.valid_candidates=2;trace.pair_available=true;trace.error_gap_close=true;
+  trace.translation_exceeds=true;PoseResult r;r.ambiguous=true;
+  std_msgs::msg::Header h;debug.observe(h,0,trace,r);
+  trace.error_gap_close=false;r.ambiguous=false;r.valid=true;debug.observe(h,1,trace,r);
+  trace=IppeTrace{};trace.valid_candidates=1;debug.observe(h,2,trace,r);
+  auto report=debug.flush(start+std::chrono::seconds(1));ASSERT_TRUE(report);ASSERT_EQ(report->status.size(),1u);
+  const auto stats=values(report->status[0]);EXPECT_EQ(stats.at("window_translation_only"),"1");
+  EXPECT_EQ(stats.at("window_accepted"),"2");EXPECT_EQ(stats.at("window_one_valid_candidate"),"1");
+  EXPECT_EQ(stats.at("window_samples_omitted"),"2");
+  EXPECT_THROW(IppeDebug invalid(0,2,{}),std::invalid_argument);
+  EXPECT_THROW(IppeDebug invalid(1,65,{}),std::invalid_argument);
+}

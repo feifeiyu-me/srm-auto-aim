@@ -83,7 +83,33 @@ double digit_score(const cv::Mat & gray, const Corners & c, const cv::Mat & temp
   }
   return best;
 }
-PoseResult solve(const Calibration & c, const Corners & corners, const Parameters & p) {
+namespace {
+IppeTrace inspect_ippe(const std::vector<PoseResult> & candidates, const Parameters & p) noexcept {
+  IppeTrace trace; trace.valid_candidates=candidates.size();
+  if(candidates.size()<2) return trace;
+  try {
+    for(size_t i=0;i<2;++i) {
+      trace.candidates[i].translation=candidates[i].translation;
+      trace.candidates[i].error_px=candidates[i].error;
+      trace.candidates[i].distance_mm=cv::norm(candidates[i].translation)*1000;
+    }
+    trace.error_gap_px=candidates[1].error-candidates[0].error;
+    trace.translation_delta_mm=(candidates[1].translation-candidates[0].translation)*1000;
+    trace.translation_separation_mm=cv::norm(candidates[0].translation-candidates[1].translation)*1000;
+    trace.signed_distance_difference_mm=trace.candidates[1].distance_mm-trace.candidates[0].distance_mm;
+    cv::Matx33d a,b; cv::Rodrigues(candidates[0].rotation,a); cv::Rodrigues(candidates[1].rotation,b);
+    cv::Vec3d delta; cv::Rodrigues(a*b.t(),delta);
+    trace.rotation_difference_deg=cv::norm(delta)*180/CV_PI;
+    trace.error_gap_close=trace.error_gap_px<=p.ambiguity_gap_px;
+    trace.translation_exceeds=cv::norm(candidates[0].translation-candidates[1].translation)>p.ambiguity_translation_m;
+    trace.rotation_exceeds=trace.rotation_difference_deg>p.ambiguity_angle_deg;
+    trace.pair_available=true;
+  } catch (...) {trace.diagnostic_error=true;} // Diagnostic failure cannot change selection.
+  return trace;
+}
+}
+PoseResult solve(const Calibration & c, const Corners & corners, const Parameters & p, IppeTrace * trace) {
+  if(trace) *trace=IppeTrace{};
   p.validate();
   if (!srm_armor_refiner::valid_corners(corners,c.size,{})) return {false,false,"invalid_geometry"};
   std::vector<cv::Mat> rotations, translations;
@@ -108,6 +134,7 @@ PoseResult solve(const Calibration & c, const Corners & corners, const Parameter
     }
     if (candidates.empty()) return {false,false,"no_valid_pnp_solution"};
     std::sort(candidates.begin(),candidates.end(),[](const auto & a,const auto & b){return a.error<b.error;});
+    if(trace) *trace=inspect_ippe(candidates,p);
     if (candidates.size()>1 && candidates[1].error-candidates[0].error<=p.ambiguity_gap_px) {
       cv::Matx33d a,b; cv::Rodrigues(candidates[0].rotation,a); cv::Rodrigues(candidates[1].rotation,b);
       cv::Vec3d delta; cv::Rodrigues(a*b.t(),delta);
