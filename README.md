@@ -52,3 +52,5 @@ YOLO-Pose 与 C++ 后处理的多装甲板消息定义、原图时间戳约定�
 [定位节点说明](docs/armor_locator.md)。需显式指定标定，不接入控制链路。
 
 第 6 阶段独立固定相机三维多目标 KF 跟踪：见 [使用与测试说明](docs/armor_tracker.md)。只输出轨迹与诊断，不接入控制。
+
+独立离线旋转靶 PnP 圆拟合、离群点分析与可视化：见 [分析脚本说明](docs/rotating_target_pnp_analysis.md)，不接入实时控制。
