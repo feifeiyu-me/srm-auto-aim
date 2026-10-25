@@ -48,8 +48,9 @@ def main():
         for i, x in enumerate(xs):
             loc = ArmorLocation()
             loc.input_index = i
-            loc.pose_valid = True
+            loc.pose_valid = loc.orientation_valid = loc.position_valid = True
             loc.pose.position.x, loc.pose.position.z = float(x), 3.0
+            loc.position.x, loc.position.z = float(x), 3.0
             loc.detection.color = colors[i] if colors else 2
             loc.detection.confidence = .85
             loc.digit_score = -1.0
@@ -85,7 +86,15 @@ def main():
         assert not out.tracks[0].velocity_valid and not out.tracks[0].prediction_valid
         for k in range(1, 31):
             x = -.5 + k*.0625*.3
-            out = send(message(10+k*.0625, [.5, x], [2, 1]))
+            msg = message(10+k*.0625, [.5, x], [2, 1])
+            if k % 2:
+                # Alternate strict full poses and independent positions with legacy zeros.
+                for loc in msg.locations:
+                    loc.pose_valid = loc.orientation_valid = False
+                    loc.ambiguous = True
+                    loc.reason = 'ambiguous_ippe'
+                    loc.pose.position.x = loc.pose.position.y = loc.pose.position.z = 0.0
+            out = send(msg)
             tt = tracks(out)
             assert set(tt) == {red, blue}
             assert tt[red].input_index == 1 and tt[blue].input_index == 0
@@ -94,14 +103,17 @@ def main():
         assert abs(moving.predicted_position.x - (moving.position.x+.1*.3)) < .005
         assert abs(tracks(out)[blue].velocity.x) < 1e-8
         assert moving.prediction_stamp != moving.state_stamp
-        print('PASS stationary/CV, reordered multi-target, velocity/covariance/prediction, Header/unverified')
+        print('PASS full/position-only mixed tracking, stable IDs, reordered multi-target, velocity/covariance/prediction, Header/unverified')
 
         # Short disappearance retains IDs; invalid observations cannot update.
         out = send(message(11.9375))
         assert all(t.state == t.COASTING for t in out.tracks)
         bad = message(12, [.5, .1, float('nan')], [2, 1, 2])
-        bad.locations[0].pose_valid = False
-        bad.locations[1].ambiguous = True
+        bad.locations[0].position_valid = False  # Valid legacy Pose must not be used.
+        bad.locations[1].position_valid = False
+        bad.locations[1].pose_valid = bad.locations[1].orientation_valid = False
+        bad.locations[1].position.x = bad.locations[1].position.y = bad.locations[1].position.z = 0.0
+        bad.locations[1].pose.position.x = bad.locations[1].pose.position.y = bad.locations[1].pose.position.z = 0.0
         out = send(bad)
         assert all(not t.matched_this_frame for t in out.tracks)
         out = send(message(12.0625, [.11875, .5], [1, 2]))

@@ -11,11 +11,12 @@ builtin_interfaces::msg::Time time_msg(int64_t n) {
   builtin_interfaces::msg::Time t; t.sec=n/1000000000;t.nanosec=n%1000000000;return t;
 }
 cv::Vec3d position(const srm_aim_interfaces::msg::ArmorLocation & m) {
-  return {m.pose.position.x,m.pose.position.y,m.pose.position.z};
+  return {m.position.x,m.position.y,m.position.z};
 }
 bool valid(const srm_aim_interfaces::msg::ArmorLocation & m) {
+  if(!m.position_valid) return false;
   auto z=position(m);
-  return m.pose_valid && !m.ambiguous && cv::checkRange(cv::Mat(z)) && z[2]>0 &&
+  return cv::checkRange(cv::Mat(z)) && z[2]>0 &&
     m.detection.color<=2 && std::isfinite(m.detection.confidence) &&
     m.detection.confidence>=0 && m.detection.confidence<=1;
 }

@@ -9,7 +9,8 @@ Input frame(double t,std::vector<double> xs={},std::vector<uint8_t> colors={}){
   Input in;in.header.stamp.sec=static_cast<int>(t);in.header.stamp.nanosec=std::llround((t-in.header.stamp.sec)*1e9);
   in.header.frame_id="camera";in.optical_frame_id="camera_optical_frame";in.image_width=1440;in.image_height=1080;
   for(size_t i=0;i<xs.size();++i){srm_aim_interfaces::msg::ArmorLocation m;m.input_index=i;
-    m.pose_valid=true;m.pose.position.x=xs[i];m.pose.position.z=3;
+    m.pose_valid=true;m.orientation_valid=true;m.position_valid=true;
+    m.pose.position.x=xs[i];m.pose.position.z=3;m.position=m.pose.position;
     m.detection.color=colors.empty()?2:colors[i];m.detection.confidence=.85;
     m.digit_score=-1;in.locations.push_back(m);}return in;
 }
@@ -81,8 +82,8 @@ TEST(Tracker, ShortLossReacquireAndLongLoss){
 }
 TEST(Tracker, InvalidPnPEmptyAndJump){
   Tracker tracker;auto first=*tracker.process(frame(10,{0}));auto id=first.tracks[0].track_id;
-  auto in=frame(10.0625,{0,0,0,0});in.locations[0].pose_valid=false;in.locations[1].ambiguous=true;
-  in.locations[2].pose.position.x=std::numeric_limits<double>::quiet_NaN();in.locations[3].pose.position.z=-1;
+  auto in=frame(10.0625,{0,0,0,0});in.locations[0].position_valid=false;in.locations[1].position_valid=false;
+  in.locations[2].position.x=std::numeric_limits<double>::quiet_NaN();in.locations[3].position.z=-1;
   auto o=*tracker.process(in);ASSERT_EQ(o.tracks.size(),1u);EXPECT_FALSE(o.tracks[0].matched_this_frame);
   o=*tracker.process(frame(10.125,{10}));EXPECT_EQ(o.tracks.size(),2u);EXPECT_NEAR(byid(o,id).position.x,0,1e-9);
 }
@@ -145,4 +146,43 @@ TEST(Tracker, NoisyStationaryPositionIsSmoothed){
     ASSERT_EQ(o.tracks.size(),1u);healthy(o);
     if(k>20){squared+=o.tracks[0].position.x*o.tracks[0].position.x;++count;}}
   EXPECT_LT(std::sqrt(squared/count),.03);
+}
+
+TEST(Tracker, OrdinaryPositionUsesIndependentCoordinates){
+  Tracker tracker;auto in=frame(10,{.25});
+  in.locations[0].pose.position.x=100;in.locations[0].pose.position.z=100;
+  auto out=*tracker.process(in);ASSERT_EQ(out.tracks.size(),1u);
+  EXPECT_DOUBLE_EQ(out.tracks[0].position.x,.25);EXPECT_DOUBLE_EQ(out.tracks[0].position.z,3);
+}
+TEST(Tracker, PositionOnlyAndMixedObservationsPreserveKalmanResults){
+  Tracker full,mixed;Output baseline,result;
+  for(int k=0;k<30;++k){auto in=frame(10+k*.0625,{k*.02});baseline=*full.process(in);
+    if(k%2){auto & m=in.locations[0];m.pose_valid=false;m.orientation_valid=false;
+      m.ambiguous=true;m.reason="ambiguous_ippe";m.pose.position=geometry_msgs::msg::Point{};}
+    result=*mixed.process(in);ASSERT_EQ(result.tracks.size(),1u);
+    EXPECT_TRUE(result.tracks[0].matched_this_frame);
+    EXPECT_EQ(result.tracks[0].track_id,baseline.tracks[0].track_id);
+    EXPECT_EQ(result.tracks[0].position,baseline.tracks[0].position);
+    EXPECT_EQ(result.tracks[0].velocity,baseline.tracks[0].velocity);
+    EXPECT_EQ(result.tracks[0].covariance,baseline.tracks[0].covariance);
+    EXPECT_EQ(result.tracks[0].state,baseline.tracks[0].state);healthy(result);
+  }
+  EXPECT_TRUE(result.tracks[0].velocity_valid);EXPECT_TRUE(result.tracks[0].prediction_valid);
+}
+TEST(Tracker, InvalidPositionNeverFallsBackToLegacyPose){
+  Tracker tracker;auto in=frame(10,{.25});in.locations[0].position_valid=false;
+  // A valid legacy Pose must not override an explicit invalid independent position.
+  EXPECT_TRUE(tracker.process(in)->tracks.empty());
+  in=frame(10.0625,{.25});in.locations[0].position_valid=false;in.locations[0].position=geometry_msgs::msg::Point{};
+  in.locations[0].pose_valid=false;in.locations[0].orientation_valid=false;in.locations[0].pose.position=geometry_msgs::msg::Point{};
+  EXPECT_TRUE(tracker.process(in)->tracks.empty());
+}
+TEST(Tracker, InvalidIndependentCoordinatesNeverFallBack){
+  Tracker tracker;
+  for(int k=0;k<3;++k){auto in=frame(10+k*.0625,{.25});
+    if(k==0)in.locations[0].position.x=std::numeric_limits<double>::infinity();
+    if(k==1)in.locations[0].position.z=0;
+    if(k==2)in.locations[0].position.z=-1;
+    EXPECT_TRUE(tracker.process(in)->tracks.empty());
+  }
 }

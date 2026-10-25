@@ -30,7 +30,7 @@
 
 更新使用 Joseph 协方差形式并对称化；检查状态有限、协方差有限/对称/半正定。异常轨迹被移除并报告 `numeric_reset`，不会发布损坏状态。后续观测可建立新的轨迹。
 
-只有 `pose_valid=true`、`ambiguous=false`、正深度、有限位置以及合法颜色/置信度的观测参与关联。默认最多 64 个输入条目；超限整帧清空跟踪并报告，不按数组顺序偷偷截断。活动轨迹最多 32，超过容量不再新建并报告 `track_limit`。
+优先检查 `position_valid`；仅在其为 true 时读取独立 `position`，并检查有限性、正深度和合法颜色/置信度。允许 `pose_valid=false / orientation_valid=false / ambiguous=true` 的仅位置观测参与原有关联和 KF 更新，不读取旧 `pose.position`。`position_valid=false` 或独立坐标非法时，绝不回退到旧 Pose。正常定位输出已同时填充独立位置，因此原有正常跟踪行为不变。默认最多 64 个输入条目；超限整帧清空跟踪并报告，不按数组顺序偷偷截断。活动轨迹最多 32，超过容量不再新建并报告 `track_limit`。
 
 按已知颜色约束、三维平方马氏距离和绝对距离门控，Hungarian 全局一对一分配，带未分配虚拟项。未知颜色不会擦除轨迹已有颜色。同一行或列最优与次优代价差不超过歧义门限时，保守阻止竞争更新及相关观测建轨。此策略可能暂时降低更新率，不能保证同色完全遮挡/交叉后永不换 ID。
 
@@ -95,3 +95,7 @@ C++ 测试覆盖：静止/变 dt 匀速、速度初始化、预测时刻与误�
 - `git diff --check` 通过。
 
 云端原始记录：`/workspace/.srm-cloud/tracker-validation.log`、`tracker-ros-smoke.log`、`tracker-startup-check.log`。未在 NUC 上运行，也未使用真实运动标注评估速度或预测精度。
+
+独立位置兼容测试另覆盖：正常有效位置、完整位姿/仅位置交替输入的数值等价性、无效标记不回退旧 Pose、独立坐标非有限/非正深度拒绝；ROS 跨进程测试交替发布完整与仅位置消息验证连续 ID、速度和预测。关联、滤波、预测、超时参数及默认值不变。
+
+独立位置兼容验证（2026-10-25）：ROS2 Humble 构建无编译警告，跟踪 C++ 22 项、接口 9 项、定位 19 项、精修 20 项全部通过，共 70 个实际用例（colcon 含包装测试汇总 76）。修改后的真实 ROS 跨进程跟踪测试及原定位位置保留策略合成回归均通过。日志：`/workspace/.srm-cloud/tracker-independent-position-validation.log`、`tracker-independent-position-ros-smoke.log`。未在 NUC 启用定位位置保留参数，未验证真实旋转靶连续性提升。
