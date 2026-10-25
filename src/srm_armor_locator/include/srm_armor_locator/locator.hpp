@@ -48,4 +48,19 @@ struct IppeTrace {
 };
 PoseResult solve(const Calibration & calibration, const Corners & corners,
   const Parameters & p = {}, IppeTrace * trace = nullptr);
+// Optional position retention is separate from strict PnP selection/rejection.
+struct PositionPolicy {
+  bool allow_rotation_ambiguous_position{false};
+  double max_translation_difference_m{0.002};
+  void validate() const;
+};
+struct LocationResult {
+  PoseResult strict_pose;
+  bool position_valid{false}, orientation_valid{false};
+  cv::Vec3d position{0,0,0};
+  std::string position_reason;
+};
+LocationResult solve_location(const Calibration & calibration, const Corners & corners,
+  const Parameters & p = {}, const PositionPolicy & policy = {}, IppeTrace * trace = nullptr);
+
 }

@@ -225,3 +225,61 @@ TEST(IppeDebug, TranslationOnlyNonTriggeredCountsAndStatsOnlyMode){
   EXPECT_THROW(IppeDebug invalid(0,2,{}),std::invalid_argument);
   EXPECT_THROW(IppeDebug invalid(1,65,{}),std::invalid_argument);
 }
+
+TEST(PositionPolicy, DefaultStrictResultsUnchanged){
+  auto c=camera();
+  for(auto r:std::vector<cv::Vec3d>{{.1,.2,0},{.3,.5,.1}}){
+    auto corners=project(c,r,{0,0,4.7});auto strict=solve(c,corners);
+    auto out=solve_location(c,corners);
+    EXPECT_EQ(out.strict_pose.valid,strict.valid);EXPECT_EQ(out.strict_pose.ambiguous,strict.ambiguous);
+    EXPECT_EQ(out.strict_pose.reason,strict.reason);EXPECT_DOUBLE_EQ(out.strict_pose.error,strict.error);
+    EXPECT_EQ(cv::norm(out.strict_pose.translation-strict.translation),0);
+    EXPECT_EQ(cv::norm(out.strict_pose.rotation-strict.rotation),0);
+    EXPECT_EQ(out.position_valid,strict.valid);EXPECT_EQ(out.orientation_valid,strict.valid);
+  }
+}
+TEST(PositionPolicy, RotationOnlyKeepsPositionWithoutAcceptingOrientation){
+  auto c=camera();auto corners=project(c,{.1,.2,0},{0,0,4.7});
+  PositionPolicy policy;policy.allow_rotation_ambiguous_position=true;IppeTrace trace;
+  auto out=solve_location(c,corners,{},policy,&trace);
+  ASSERT_TRUE(out.strict_pose.ambiguous);ASSERT_TRUE(trace.pair_available);
+  EXPECT_TRUE(trace.rotation_exceeds);EXPECT_FALSE(trace.translation_exceeds);
+  EXPECT_TRUE(out.position_valid);EXPECT_FALSE(out.orientation_valid);EXPECT_FALSE(out.strict_pose.valid);
+  EXPECT_EQ(out.strict_pose.reason,"ambiguous_ippe");
+  EXPECT_EQ(out.position_reason,"position_retained_rotation_ambiguity");
+  EXPECT_EQ(cv::norm(out.position-trace.candidates[0].translation),0);
+  EXPECT_EQ(cv::norm(out.strict_pose.translation),0);
+  auto implicit=solve_location(c,corners,{},policy); // Must work even with IPPE debug disabled.
+  EXPECT_TRUE(implicit.position_valid);EXPECT_EQ(cv::norm(implicit.position-out.position),0);
+}
+TEST(PositionPolicy, OwnTranslationLimitAndOriginalTranslationAmbiguityStillReject){
+  auto c=camera();auto corners=project(c,{.1,.2,0},{.1,0,4.7});IppeTrace trace;
+  solve(c,corners,{},&trace);ASSERT_TRUE(trace.pair_available);
+  const double separation=cv::norm(trace.candidates[0].translation-trace.candidates[1].translation);
+  ASSERT_GT(separation,0);
+  PositionPolicy policy;policy.allow_rotation_ambiguous_position=true;
+  policy.max_translation_difference_m=separation; // Inclusive upper boundary.
+  auto out=solve_location(c,corners,{},policy);EXPECT_TRUE(out.position_valid);
+  policy.max_translation_difference_m=separation*.5;
+  out=solve_location(c,corners,{},policy);EXPECT_FALSE(out.position_valid);
+  EXPECT_EQ(out.position_reason,"position_translation_limit_exceeded");
+  policy.max_translation_difference_m=1;Parameters p;p.ambiguity_translation_m=separation*.5;
+  out=solve_location(c,corners,p,policy);EXPECT_FALSE(out.position_valid);EXPECT_FALSE(out.orientation_valid);
+  EXPECT_TRUE(out.strict_pose.ambiguous);EXPECT_EQ(out.position_reason,"translation_ambiguity_rejected");
+  p.ambiguity_angle_deg=180; // Translation-only ambiguity is also rejected.
+  out=solve_location(c,corners,p,policy);EXPECT_FALSE(out.position_valid);
+  EXPECT_TRUE(out.strict_pose.ambiguous);EXPECT_EQ(out.position_reason,"translation_ambiguity_rejected");
+}
+TEST(PositionPolicy, OtherValidityGuardsAndPolicyValidation){
+  auto c=camera();PositionPolicy policy;policy.allow_rotation_ambiguous_position=true;
+  auto full=solve_location(c,project(c,{.3,.5,.1},{.3,.1,2}),{},policy);
+  EXPECT_TRUE(full.strict_pose.valid);EXPECT_TRUE(full.position_valid);EXPECT_TRUE(full.orientation_valid);
+  auto points=project(c,{.1,.2,0},{0,0,4.7});Parameters p;p.max_depth_m=1;
+  auto out=solve_location(c,points,p,policy);EXPECT_FALSE(out.position_valid);EXPECT_FALSE(out.orientation_valid);
+  auto distorted=points;distorted[0].x+=10;p=Parameters{};p.max_error_px=.001;
+  out=solve_location(c,distorted,p,policy);EXPECT_FALSE(out.position_valid);
+  points[0].x=-1;out=solve_location(c,points,{},policy);EXPECT_FALSE(out.position_valid);
+  policy.max_translation_difference_m=0;EXPECT_THROW(policy.validate(),std::invalid_argument);
+  policy.max_translation_difference_m=std::numeric_limits<double>::quiet_NaN();
+  EXPECT_THROW(policy.validate(),std::invalid_argument);
+}

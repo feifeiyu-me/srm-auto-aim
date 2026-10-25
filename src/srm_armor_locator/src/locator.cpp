@@ -145,4 +145,45 @@ PoseResult solve(const Calibration & c, const Corners & corners, const Parameter
     return candidates.front();
   } catch (const cv::Exception &) {return {false,false,"pnp_opencv_error"};}
 }
+void PositionPolicy::validate() const {
+  if(!std::isfinite(max_translation_difference_m) || max_translation_difference_m<=0)
+    throw std::invalid_argument("position_only_max_translation_m must be positive and finite");
+}
+LocationResult solve_location(const Calibration & c, const Corners & corners,
+  const Parameters & p, const PositionPolicy & policy, IppeTrace * trace) {
+  policy.validate();
+  IppeTrace local_trace;
+  auto capture=trace?trace:(policy.allow_rotation_ambiguous_position?&local_trace:nullptr);
+  LocationResult out;
+  out.strict_pose=solve(c,corners,p,capture); // Strict solver remains unchanged.
+  const auto & strict=out.strict_pose;
+  if(strict.valid) {
+    out.position_valid=true;out.orientation_valid=true;out.position=strict.translation;
+    out.position_reason="full_pose_valid";return out;
+  }
+  out.position_reason=strict.reason;
+  if(!strict.ambiguous) return out;
+  if(!policy.allow_rotation_ambiguous_position) {
+    out.position_reason="rotation_ambiguity_position_disabled";return out;
+  }
+  if(!capture || !capture->pair_available || capture->diagnostic_error) {
+    out.position_reason="ippe_pair_unavailable";return out;
+  }
+  if(capture->translation_exceeds) {
+    out.position_reason="translation_ambiguity_rejected";return out;
+  }
+  if(!capture->error_gap_close || !capture->rotation_exceeds) {
+    out.position_reason="not_rotation_only_ambiguity";return out;
+  }
+  // Compare in metres, exactly as the original translation test does.
+  const auto & best=capture->candidates[0].translation;
+  if(cv::norm(best-capture->candidates[1].translation)>policy.max_translation_difference_m) {
+    out.position_reason="position_translation_limit_exceeded";return out;
+  }
+  // Both candidates already passed finite/depth/reprojection checks in solve().
+  out.position_valid=true;out.position=best;
+  out.position_reason="position_retained_rotation_ambiguity";
+  return out; // orientation_valid stays false; strict_pose is never rewritten.
+}
+
 }

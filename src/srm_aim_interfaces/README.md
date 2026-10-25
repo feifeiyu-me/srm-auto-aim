@@ -135,3 +135,5 @@ colcon test-result --test-result-base build/srm_aim_interfaces --verbose
 详见[定位节点说明](../../docs/armor_locator.md)。原有三个检测消息字段保持不变。
 
 `ArmorTrack` / `ArmorTrackArray` 为独立三维跟踪输出。位置与速度使用显式 `tracking_frame_id`，目前固定 `camera_optical_frame`，`self_motion_compensated=false`。Header 保留源图像；使用状态/观测/预测各自时间和有效标记，`input_index` 仅当帧内匹配有效。轨迹身份为 `(session_id, track_id)`；数字未经验证不标记为 2。详见 [跟踪文档](../../docs/armor_tracker.md)。
+
+`ArmorLocation` 末尾新增独立 `position_valid`、`orientation_valid`、`position`、`position_reason`。旧 `pose_valid` 仍表示完整严格位姿；仅位置保留时旧 Pose/距离仍是无效占位、`ambiguous=true / reason=ambiguous_ippe` 不变。新位置仅在 `position_valid=true` 时使用，坐标系同 `optical_frame_id`。字段追加改变 CDR 布局，接口包和全部消息使用者必须一起重编译，不能混用旧二进制。当前跟踪器和离线圆拟合不会自动使用仅位置观测。详见 [独立位置策略](../../docs/armor_locator.md)。

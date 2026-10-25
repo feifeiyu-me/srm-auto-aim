@@ -77,3 +77,18 @@ def test_track_serialization_preserves_state_times_covariance_and_unverified_dig
     assert not decoded.self_motion_compensated
     assert not decoded.tracks[0].digit_verified and decoded.tracks[0].digit == 0
     assert len(decoded.tracks[0].covariance) == 36
+
+
+def test_independent_position_preserves_rejected_legacy_pose():
+    from srm_aim_interfaces.msg import ArmorLocation, ArmorLocationArray
+    item = ArmorLocation(pose_valid=False, ambiguous=True, reason='ambiguous_ippe',
+                         position_valid=True, orientation_valid=False,
+                         position_reason='position_retained_rotation_ambiguity')
+    item.position.x, item.position.z = .1, 4.7
+    frame = ArmorLocationArray(locations=[item])
+    decoded = deserialize_message(serialize_message(frame), ArmorLocationArray)
+    assert decoded == frame
+    result = decoded.locations[0]
+    assert result.position_valid and not result.orientation_valid and not result.pose_valid
+    assert result.pose.position.z == 0.0 and result.axial_depth_m == 0.0 and result.distance_m == 0.0
+    assert result.position.z == 4.7 and result.reason == 'ambiguous_ippe'

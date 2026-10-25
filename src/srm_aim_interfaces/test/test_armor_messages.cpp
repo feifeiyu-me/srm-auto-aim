@@ -96,3 +96,27 @@ TEST(ArmorMessages, TrackStateAndPredictionRoundTrip)
   EXPECT_FALSE(decoded.tracks[0].digit_verified);
   EXPECT_EQ(decoded.tracks[0].digit, 0);
 }
+
+#include <srm_aim_interfaces/msg/armor_location_array.hpp>
+TEST(ArmorMessages, IndependentPositionKeepsLegacyPoseInvalid)
+{
+  using srm_aim_interfaces::msg::ArmorLocationArray;
+  ArmorLocationArray source;
+  source.locations.resize(1);
+  auto & item = source.locations[0];
+  item.position_valid = true;
+  item.position.z = 4.7;
+  item.ambiguous = true;
+  item.reason = "ambiguous_ippe";
+  item.position_reason = "position_retained_rotation_ambiguity";
+  rclcpp::Serialization<ArmorLocationArray> serializer;
+  rclcpp::SerializedMessage wire;
+  serializer.serialize_message(&source, &wire);
+  ArmorLocationArray decoded;
+  serializer.deserialize_message(&wire, &decoded);
+  EXPECT_EQ(decoded, source);
+  EXPECT_FALSE(decoded.locations[0].pose_valid);
+  EXPECT_FALSE(decoded.locations[0].orientation_valid);
+  EXPECT_DOUBLE_EQ(decoded.locations[0].pose.position.z, 0);
+  EXPECT_DOUBLE_EQ(decoded.locations[0].position.z, 4.7);
+}

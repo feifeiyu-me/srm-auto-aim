@@ -17,3 +17,10 @@ float64 axial_depth_m
 float64 distance_m
 # Pixel RMS; -1 when unavailable.
 float64 reprojection_error_px
+# Independent position channel; same array.optical_frame_id, metres.
+# pose_valid retains its original full-pose meaning. Invalid legacy pose/distance
+# fields remain placeholders even if this independent position is usable.
+bool position_valid
+bool orientation_valid
+geometry_msgs/Point position
+string position_reason

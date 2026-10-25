@@ -244,3 +244,70 @@ ROS_DOMAIN_ID=82 ROS_LOCALHOST_ONLY=1 \
 跨进程测试使用合成图像/角点和真实 C++ ROS 节点，分别运行默认关闭与启用诊断，比较全部定位消息，检查原始 Header、mm/度字段、双解统计和样本上限。大图像 DDS 传输受运行环境配置影响；不能将传输超时解释成算法通过。
 
 本次云端验证（2026-10-25）：Ubuntu 22.04 / ROS2 Humble / OpenCV 4.5.4 构建成功、无编译警告；新增 4 项 IPPE 诊断测试与原有 11 项定位测试全部通过。真实跨进程测试通过：默认无诊断发布者，开启后有限额/限频、完整样本 Header、24 次尝试 / 12 次接受 / 12 次歧义计数正确；关闭和开启时 12 组定位消息字段完全一致。原始记录位于 `/workspace/.srm-cloud/ippe-validation.log` 和 `/workspace/.srm-cloud/ippe-ros-smoke.log`。测试使用合成输入，未连接任何控制机构，未验证 NUC 实测双解差异或定位精度。
+
+## 可选：仅旋转歧义时保留独立位置（默认关闭）
+
+动态诊断中的两解位置接近，只能作为设计依据，不能证明真实测距精度或旋转姿态可靠。原 `solve()`、候选筛选和全部严格歧义判断保持原样；新增外层 `solve_location()`，不重写严格结果，也不改变旧 `pose_valid` 含义。
+
+### 最小接口扩展与兼容边界
+
+`ArmorLocation.msg` 只在末尾追加四个字段：
+
+```text
+bool position_valid
+bool orientation_valid
+geometry_msgs/Point position
+string position_reason
+```
+
+`position` 是相机光学坐标系下的独立位置，单位 m，使用数组的 `optical_frame_id`。`position_valid` 仅管这个新字段；`orientation_valid` 表示旧 `pose.orientation` 是否通过严格求解。未验证数字仍保持原有未验证标记。
+
+| 情形 | pose_valid | position_valid | orientation_valid | ambiguous / reason |
+|---|---|---|---|---|
+| 严格完整位姿通过 | true | true | true | 保留原结果 |
+| 默认模式的歧义拒绝 | false | false | false | true / ambiguous_ippe |
+| 显式开启且仅旋转歧义、位置差足够小 | false | true | false | true / ambiguous_ippe |
+| 原平移歧义或新位置差门限不通过 | false | false | false | true / ambiguous_ippe |
+
+仅保留位置时：
+
+- `position` 保存最低重投影 RMS 候选的平移；不平均两个解，不选择或发布其不可靠旋转。
+- `position_reason=position_retained_rotation_ambiguity`。
+- **旧 `pose`、`axial_depth_m`、`distance_m` 继续使用无效占位值**（位置/距离为 0、四元数为原有 identity 占位）。旧 `pose_valid=false`、`ambiguous=true`、`reason=ambiguous_ippe` 均保持。
+- `reprojection_error_px` 保留原严格拒绝时的最佳候选 RMS。新位置的轴向深度和欧氏距离需在 `position_valid=true` 时从 `position.z` 和 `norm(position)` 获取。
+- 其他失败（数字验证、无效角点、深度/重投影检查、OpenCV 错误）不会得到有效位置。
+
+这是**旧字段语义兼容的追加扩展，不是旧二进制 CDR 布局兼容**。更新后必须重编译接口包及所有消息使用者；不要混用旧生成类型的已启动节点。
+
+现有跟踪器仍使用 `pose_valid && !ambiguous` 和 `pose.position`，本次没有修改其算法或输入适配。因此不会自动消费仅位置结果；离线圆拟合脚本同样仍只使用旧完整位姿。这是有意保留的行为，不应假定本次变更会增加当前跟踪器输入。
+
+### 参数与条件
+
+两个参数均只读，需重启后生效：
+
+- `allow_rotation_ambiguous_position=false`：只有显式设置 true 才可保留位置。
+- `position_only_max_translation_m=0.002`：两解平移向量间距的额外上限，单位 m，必须有限且 > 0；工程初值，不是精度保证。
+
+同时满足以下条件才保留：严格结果确实为 `ambiguous_ippe`；两个候选已经通过原有有限性、正深度、深度范围、最大重投影 RMS 筛选；误差差值满足原接近条件；旋转差超原阈值；**平移差没有超原阈值**；且平移差 `<= position_only_max_translation_m`。即使新阈值配得比原 10 mm 大，原平移歧义仍然拒绝，不能绕过。
+
+否则 `position_reason` 说明禁用、平移歧义、新位置门限超限或其他原失败。一般诊断 `/srm_aim/armor_locator/debug` 增加三个独立状态字段；原 IPPE 诊断及其双解/触发信息保持不变。`ippe_debug` 中 accepted/ambiguous 统计仍表示严格完整位姿，不将位置保留计入完整位姿接受数量。
+
+### 构建与测试（不在实机启用）
+
+```bash
+source /opt/ros/humble/setup.bash
+colcon build --packages-up-to srm_armor_locator srm_armor_tracker --executor sequential \
+  --cmake-args -DBUILD_TESTING=ON -DCMAKE_BUILD_TYPE=RelWithDebInfo
+source install/setup.bash
+colcon test --packages-select srm_aim_interfaces srm_armor_locator srm_armor_refiner srm_armor_tracker
+colcon test-result --verbose
+
+# 仅在隔离 ROS domain 下，用合成图像/角点启动测试子进程；不连接实物。
+ROS_DOMAIN_ID=83 ROS_LOCALHOST_ONLY=1 \
+  python3 src/srm_armor_locator/test/position_policy_ros_smoke.py \
+    calibration/20261019_182722/camera.yaml
+```
+
+没有修改 NUC 启动配置，没有在实机开启此参数。正常实机启动继续使用原命令，不传新开关；默认仍严格拒绝旋转歧义。新增测试只在隔离合成进程内启用。
+
+本次云端验证（2026-10-25）：Humble 构建成功且无编译警告；定位 C++ 19 项（新增位置策略 4 项）、接口 C++/Python 9 项、精修 20 项、跟踪 18 项，共 66 个实际测试用例全部通过（colcon 含包装测试汇总 72，零失败）。真实跨进程合成测试验证默认严格、显式位置保留、小位置门限拒绝、原平移歧义拒绝，并比较 12 组数组的全部旧字段保持一致；现有跟踪 ROS 合成回归也通过。日志：`/workspace/.srm-cloud/position-policy-validation.log`、`/workspace/.srm-cloud/position-policy-ros-smoke.log`。没有在 NUC 或实物上启用新策略，不宣称位置保留的实际精度已验证。

@@ -20,13 +20,14 @@ from sensor_msgs.msg import Image
 from srm_aim_interfaces.msg import ArmorDetection, ArmorDetectionArray, ArmorLocationArray, Keypoint2D
 
 
-def run(calibration_file, enabled):
+def run(calibration_file, enabled, extra_args=()):
     exe = Path(get_package_prefix('srm_armor_locator')) / 'lib/srm_armor_locator/armor_locator_node'
     args = [str(exe), '--ros-args', '-p', 'calibration_file:='+calibration_file,
             '-p', 'enable_digit_verification:=false']
     if enabled:
         args += ['-p', 'ippe_debug_enabled:=true', '-p', 'ippe_debug_interval_sec:=0.2',
                  '-p', 'ippe_debug_max_samples:=2']
+    args += list(extra_args)
     process = subprocess.Popen(args, start_new_session=True)
     rclpy.init()
     peer = Node('ippe_debug_test_peer')
