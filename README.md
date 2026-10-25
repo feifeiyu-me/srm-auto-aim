@@ -56,3 +56,5 @@ YOLO-Pose 与 C++ 后处理的多装甲板消息定义、原图时间戳约定�
 独立离线旋转靶 PnP 圆拟合、离群点分析与可视化：见 [分析脚本说明](docs/rotating_target_pnp_analysis.md)，不接入实时控制。
 
 独立云台视觉跟随视线角诊断（仅诊断，不输出硬件命令）：见 [srm_visual_follower 使用说明](docs/visual_follower.md)。
+
+独立双轴云台视觉跟随控制（第一版仅仿真，硬件/串口输出固定禁用）：见 [srm_gimbal_follower 仿真与测试说明](docs/gimbal_follower.md)。
