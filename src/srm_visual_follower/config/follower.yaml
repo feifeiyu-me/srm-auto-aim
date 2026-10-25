@@ -1,0 +1,17 @@
+visual_follower_node:
+  ros__parameters:
+    selection_strategy: closest_to_axis  # nearest | lowest_id
+    sticky_selection: true
+    max_tracks: 64
+    target_timeout_sec: 0.30
+    max_state_age_sec: 0.30
+    input_timeout_sec: 0.30
+    future_tolerance_sec: 0.02
+    max_prediction_horizon_sec: 0.50
+    min_depth_m: 0.05
+    max_distance_m: 50.0
+    # No camera/gimbal identity assumption. Values below are unused placeholders.
+    extrinsics_valid: false
+    reference_frame: ""
+    translation_m: [0.0, 0.0, 0.0]
+    quaternion_xyzw: [0.0, 0.0, 0.0, 1.0]
