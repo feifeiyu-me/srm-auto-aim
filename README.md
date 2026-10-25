@@ -58,3 +58,5 @@ YOLO-Pose 与 C++ 后处理的多装甲板消息定义、原图时间戳约定�
 独立云台视觉跟随视线角诊断（仅诊断，不输出硬件命令）：见 [srm_visual_follower 使用说明](docs/visual_follower.md)。
 
 独立双轴云台视觉跟随控制（第一版仅仿真，硬件/串口输出固定禁用）：见 [srm_gimbal_follower 仿真与测试说明](docs/gimbal_follower.md)。
+
+独立人工云台小步进实机测试适配层（默认只读、不接视觉、复用现有串口且 fire 固定为 0）：[NUC 只读验证、人工使能与停止步骤](docs/manual_gimbal_step.md)。

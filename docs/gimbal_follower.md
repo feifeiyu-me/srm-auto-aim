@@ -2,7 +2,9 @@
 
 新增 `srm_gimbal_follower`（ROS2 Humble / ament_cmake / C++17），包括独立控制节点、合成双轴云台/视觉源、隔离仿真 launch、YAML 和测试。它复用现有视觉诊断的角度/已预测位置，不重写 YOLO、PCA、PnP 或卡尔曼算法。
 
-**第一版本始终只允许仿真。** `mode` 唯一合法值是 `simulation`；没有串口依赖，没有真实控制发布者，没有发射或弹道接口。即使 `calibration_verified=true`，`real_hardware_enabled=false`、`serial_tx_enabled=false` 也固定不变。输出话题不能重映射到仿真命名空间以外。
+新增的独立 `manual_step_node` 不属于此自动仿真控制路径，人工硬件测试门控与操作见 [手动小步进说明](manual_gimbal_step.md)。下述无硬件发布者约束针对原仿真控制/仿真器节点。
+
+**原自动视觉跟随节点始终只允许仿真。** `mode` 唯一合法值是 `simulation`；没有串口依赖，没有真实控制发布者，没有发射或弹道接口。即使 `calibration_verified=true`，`real_hardware_enabled=false`、`serial_tx_enabled=false` 也固定不变。输出话题不能重映射到仿真命名空间以外。
 
 ## 接口与默认保护
 
