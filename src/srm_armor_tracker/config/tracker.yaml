@@ -1,0 +1,22 @@
+armor_tracker_node:
+  ros__parameters:
+    locations_topic: /srm_aim/armor_locations
+    tracks_topic: /srm_aim/armor_tracks
+    max_tracks: 32
+    max_observations: 64
+    confirmation_hits: 3
+    velocity_hits: 3
+    velocity_min_span_sec: 0.08
+    acceleration_noise: 4.0       # acceleration std, m/s^2; discrete random acceleration
+    measurement_xy: 0.03         # observation std, m; requires empirical calibration
+    measurement_z: 0.10
+    initial_velocity_std: 3.0    # m/s; zero initial velocity is NOT a measurement
+    gate_squared: 11.345         # squared 3D Mahalanobis distance
+    max_distance_m: 1.0
+    ambiguity_margin: 0.5        # difference between squared Mahalanobis costs
+    coast_sec: 0.20
+    delete_sec: 0.30
+    max_gap_sec: 0.50
+    time_reset_sec: 1.0          # >= this backward jump resets; smaller jumps rejected
+    prediction_sec: 0.10
+    input_timeout_sec: 0.50      # monotonic receipt timeout

@@ -51,3 +51,29 @@ def test_no_detections_is_an_empty_stamped_frame():
 
 def test_unclassified_armor_uses_unknown_color():
     assert ArmorDetection().color == ArmorDetection.COLOR_UNKNOWN
+
+
+def test_track_serialization_preserves_state_times_covariance_and_unverified_digit():
+    from srm_aim_interfaces.msg import ArmorTrack, ArmorTrackArray
+    frame = ArmorTrackArray()
+    frame.header.stamp.sec = 123
+    frame.header.frame_id = 'source_camera'
+    frame.tracking_frame_id = 'camera_optical_frame'
+    frame.session_id = 'test_session'
+    track = ArmorTrack(track_id=2**40, state=ArmorTrack.CONFIRMED,
+                       state_valid=True, velocity_valid=True,
+                       prediction_valid=True, matched_this_frame=True,
+                       input_index=7)
+    track.state_stamp.sec = track.last_observation_stamp.sec = 123
+    track.prediction_stamp.sec = 123
+    track.prediction_stamp.nanosec = 100000000
+    track.position.z = 3.0
+    track.velocity.x = 0.5
+    track.predicted_position.x = 0.05
+    track.covariance = [0.1 if i // 6 == i % 6 else 0.0 for i in range(36)]
+    frame.tracks = [track]
+    decoded = deserialize_message(serialize_message(frame), ArmorTrackArray)
+    assert decoded == frame
+    assert not decoded.self_motion_compensated
+    assert not decoded.tracks[0].digit_verified and decoded.tracks[0].digit == 0
+    assert len(decoded.tracks[0].covariance) == 36

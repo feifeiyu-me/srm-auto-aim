@@ -4,6 +4,7 @@
 #include <rclcpp/serialized_message.hpp>
 #include <srm_aim_interfaces/msg/armor_detection.hpp>
 #include <srm_aim_interfaces/msg/armor_detection_array.hpp>
+#include <srm_aim_interfaces/msg/armor_track_array.hpp>
 
 TEST(ArmorMessages, PreservesMultipleArmorsAndSourceImageHeader)
 {
@@ -62,4 +63,36 @@ TEST(ArmorMessages, EmptyArrayRetainsFrameIdentity)
 
   EXPECT_EQ(decoded, source);
   EXPECT_TRUE(decoded.detections.empty());
+}
+
+TEST(ArmorMessages, TrackStateAndPredictionRoundTrip)
+{
+  using srm_aim_interfaces::msg::ArmorTrack;
+  using srm_aim_interfaces::msg::ArmorTrackArray;
+  ArmorTrackArray source;
+  source.header.stamp.sec = 123;
+  source.header.frame_id = "source_camera";
+  source.tracking_frame_id = "camera_optical_frame";
+  source.session_id = "test_session";
+  ArmorTrack track;
+  track.track_id = uint64_t(1) << 40;
+  track.state = ArmorTrack::CONFIRMED;
+  track.state_stamp = source.header.stamp;
+  track.prediction_stamp.sec = 123;
+  track.prediction_stamp.nanosec = 100000000;
+  track.position.z = 3;
+  track.velocity.x = .5;
+  track.predicted_position.x = .05;
+  track.velocity_valid = track.state_valid = track.prediction_valid = true;
+  for (size_t i = 0; i < 6; ++i) {track.covariance[i * 6 + i] = .1;}
+  source.tracks.push_back(track);
+  rclcpp::Serialization<ArmorTrackArray> serializer;
+  rclcpp::SerializedMessage wire;
+  serializer.serialize_message(&source, &wire);
+  ArmorTrackArray decoded;
+  serializer.deserialize_message(&wire, &decoded);
+  EXPECT_EQ(decoded, source);
+  EXPECT_FALSE(decoded.self_motion_compensated);
+  EXPECT_FALSE(decoded.tracks[0].digit_verified);
+  EXPECT_EQ(decoded.tracks[0].digit, 0);
 }

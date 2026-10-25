@@ -133,3 +133,5 @@ colcon test-result --test-result-base build/srm_aim_interfaces --verbose
 静默改名；输入索引仅在本帧内有效。必须检查 pose_valid 后再使用位姿或距离。
 关闭数字验证时 digit=0、digit_verified=false、digit_score=-1，不表示数字 2 已识别。
 详见[定位节点说明](../../docs/armor_locator.md)。原有三个检测消息字段保持不变。
+
+`ArmorTrack` / `ArmorTrackArray` 为独立三维跟踪输出。位置与速度使用显式 `tracking_frame_id`，目前固定 `camera_optical_frame`，`self_motion_compensated=false`。Header 保留源图像；使用状态/观测/预测各自时间和有效标记，`input_index` 仅当帧内匹配有效。轨迹身份为 `(session_id, track_id)`；数字未经验证不标记为 2。详见 [跟踪文档](../../docs/armor_tracker.md)。
