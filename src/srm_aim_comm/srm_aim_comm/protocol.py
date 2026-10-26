@@ -25,8 +25,7 @@ def pack_upper_frame(
     pitch: float,
     fire_flag: int
 ) -> bytes:
-    """生成上位机 -> 下位机的完整 18 字节协议帧。"""
-
+    """生成上位机 -> 下位机的完整 18 字节协议帧."""
     if not math.isfinite(yaw) or not math.isfinite(pitch):
         raise ValueError("yaw 和 pitch 必须是有限数值")
 
@@ -52,8 +51,7 @@ def pack_upper_frame(
 
 
 def unpack_upper_frame(frame: bytes):
-    """解析完整的 18 字节上行协议帧。"""
-
+    """解析完整的 18 字节上行协议帧."""
     if len(frame) != 18:
         raise ValueError(
             f"帧长度错误: expected 18, got {len(frame)}"
@@ -88,8 +86,7 @@ def unpack_upper_frame(frame: bytes):
 # ============================================================
 
 def unpack_lower_frame(frame: bytes):
-    """解析完整的 30 字节下行协议帧。"""
-
+    """解析完整的 30 字节下行协议帧."""
     if len(frame) != 30:
         raise ValueError(
             f"帧长度错误: expected 30, got {len(frame)}"
@@ -141,7 +138,7 @@ def unpack_lower_frame(frame: bytes):
 
 class LowerFrameParser:
     """
-    下位机返回帧流式解析器。
+    下位机返回帧流式解析器.
 
     支持：
     1. 一帧拆成多次接收
@@ -158,12 +155,11 @@ class LowerFrameParser:
 
     def feed(self, data: bytes):
         """
-        输入本次收到的字节。
+        输入本次收到的字节.
 
         返回：
             本次提取出的完整帧列表。
         """
-
         if not isinstance(data, (bytes, bytearray, memoryview)):
             raise TypeError("data 必须是 bytes 类型数据")
 

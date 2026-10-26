@@ -24,17 +24,10 @@ setup(
         ],
     },
     entry_points={
-    'console_scripts': [
-        'comm_node = srm_aim_comm.comm_node:main',
-        'vision_sim_node = srm_aim_comm.vision_sim_node:main',
-        'aim_solver_node = srm_aim_comm.aim_solver_node:main',
-        'aim_control_node = srm_aim_comm.aim_control_node:main',
-        'camera_node = srm_aim_comm.camera_node:main',
-        'gimbal_sim_node = srm_aim_comm.gimbal_sim_node:main',
-        'serial_comm_node = srm_aim_comm.serial_comm_node:main',
-        'armor_detector_node = srm_aim_comm.armor_detector_node:main',
-        'yolo_pose_node = srm_aim_comm.yolo_pose_node:main',
-        'yolo_visualizer_node = srm_aim_comm.yolo_visualizer_node:main',
+        'console_scripts': [
+            'serial_comm_node = srm_aim_comm.serial_comm_node:main',
+            'yolo_pose_node = srm_aim_comm.yolo_pose_node:main',
+            'yolo_visualizer_node = srm_aim_comm.yolo_visualizer_node:main',
         ],
     },
 )
